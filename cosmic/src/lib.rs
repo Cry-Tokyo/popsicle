@@ -12,3 +12,5 @@ pub mod style;
 pub use style::*;
 pub mod error;
 pub use error::*;
+pub mod flash;
+pub use flash::*;

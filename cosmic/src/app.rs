@@ -1,25 +1,11 @@
 //! a
-use std::os::fd::FromRawFd;
-
-use cosmic::cosmic_theme::palette::num::PartialCmp;
 use cosmic::ApplicationExt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
-/// Wrapper type to impl Clone trait, shouldn't ever panic.
-#[derive(Debug)]
-pub struct File {
-    ///
-    pub file: std::fs::File,
-}
-impl Clone for File {
-    fn clone(&self) -> Self {
-        File { file: self.file.try_clone().unwrap() }
-    }
-}
+use std::sync::{Arc, Mutex};
 
 const HASH_SELECTIONS: [&str; 6] = ["None", "SHA512", "SHA256", "SHA1", "MD5", "BLAKE2b"];
 /// The app model the holds context, state, and core logic.
@@ -217,7 +203,7 @@ impl cosmic::Application for App {
                 };
             }
             Message::RefreshDevices => {
-                if let Some(devices) = refresh_devices(self.state.image_size) {
+                if let Some(devices) = crate::flash::refresh_devices(self.state.image_size) {
                     let device_paths = devices
                         .iter()
                         .map(|d| {
@@ -272,7 +258,6 @@ impl cosmic::Application for App {
                         })
                         .collect(),
                 );
-                println!("{:?}", self.state.drives_selected.as_ref().unwrap());
                 let n = self.state.drives_selected.as_ref().unwrap().len();
                 self.state.flash_finished =
                     Arc::new((0..n).map(|_| atomic::Atomic::new(false)).collect::<_>());
@@ -283,8 +268,7 @@ impl cosmic::Application for App {
                 )));
             }
             Message::Flash => {
-                tracing::info!("fuck");
-                let mut flash = Flash::new(
+                let mut flash = crate::flash::Flash::new(
                     std::fs::File::open(self.state.image.as_ref().unwrap()).unwrap(),
                     self.state.flash_progress.clone(),
                     self.state.flash_finished.clone(),
@@ -296,21 +280,18 @@ impl cosmic::Application for App {
                     .unwrap()
                     .iter()
                     .map(|p| {
-                        tracing::info!("{:?}", p);
-                        let _ = udisks_unmount(&p.parent.path);
+                        let _ = crate::flash::udisks_unmount(&p.parent.path);
                         for partition in &p.partitions {
-                            let _ = udisks_unmount(&partition.path);
+                            let _ = crate::flash::udisks_unmount(&partition.path);
                         }
-                        udisks_open(&p.parent.path).unwrap()
+                        crate::flash::udisks_open(&p.parent.path).unwrap()
                     })
                     .collect();
                 return cosmic::task::future(async move {
                     let task = flash.write(drives);
                     let mut buf = [0u8; 64 * 1024];
                     match futures::executor::block_on(task.process(&mut buf)) {
-                        Ok(_) => {
-                            tracing::info!("fuck");
-                        }
+                        Ok(_) => {}
                         Err(e) => {
                             tracing::error!("{}", e)
                         }
@@ -540,8 +521,6 @@ impl App {
         )
     }
     fn progress_view(&self) -> cosmic::Element<'_, Message> {
-        println!("{}", self.state.flash_progress[0].load(Ordering::SeqCst));
-
         let drive_icon = cosmic::widget::Image::new(cosmic::widget::image::Handle::from_path(
             "assets/drive-removable-media-usb.png",
         ))
@@ -551,22 +530,41 @@ impl App {
             cosmic::widget::text::body("Do not unplug devices while they are being flashed.");
 
         let mut flash_buf = vec![];
+        let mut prev = self.state.previous.lock().unwrap();
         if let Some(drives) = self.state.drives_selected.as_ref() {
             for (i, drive) in drives.iter().enumerate() {
                 let progress_label = match self.state.flash_finished[i].load(Ordering::SeqCst) {
                     true => cosmic::widget::text::body("Complete"),
                     false => cosmic::widget::text::body(format!(
-                        "{:?} B/s",
-                        self.state.flash_progress[i].load(Ordering::SeqCst)
+                        "{}/s",
+                        bytesize::ByteSize::b({
+                            prev[i][1] = prev[i][2];
+                            prev[i][2] = prev[i][3];
+                            prev[i][3] = prev[i][4];
+                            prev[i][4] = prev[i][5];
+                            prev[i][5] = prev[i][6];
+                            prev[i][6] =
+                                self.state.flash_progress[i].load(Ordering::SeqCst) - prev[i][0];
+                            prev[i][0] = self.state.flash_progress[i].load(Ordering::SeqCst);
+                            prev[i].iter().skip(1).sum::<u64>() / 3
+                        })
+                        .to_string()
                     )),
                 };
-                let progress_name = cosmic::widget::text::heading(drive.clone());
+                let progress_name = cosmic::widget::text::heading(format!(
+                    "{} ({})",
+                    self.state.drives_paths.as_ref().unwrap()[i].0.clone(),
+                    self.state.drives_paths.as_ref().unwrap()[i].1.clone()
+                ));
                 let progress_column = cosmic::widget::column()
                     .push(
                         cosmic::iced::widget::progress_bar(
                             0.0..=100.,
-                            //self.state.flash_progress.unwrap().progress[i].into(),
-                            50.,
+                            {
+                                let f = self.state.flash_progress[i].load(Ordering::SeqCst) as f64
+                                    / self.state.image_size.unwrap() as f64;
+                                f as f32
+                            }, //raw_value as f64 / length as f64
                         )
                         .height(cosmic::iced::Length::Fixed(2.0)),
                     )
@@ -694,125 +692,16 @@ pub struct AppState {
     hash: Option<String>,
     selected_hash: Option<usize>,
     all_drives: bool,
+
     // list of devices paths and sizes
     drives_paths: Option<Vec<(String, String, String)>>,
     drives: HashMap<usize, bool>,
     //drives choosen to be flashed
     drives_selected: Option<Vec<Arc<dbus_udisks2::DiskDevice>>>, //Option<Vec<String>>,
+
+    //
+    previous: Arc<Mutex<Vec<[u64; 7]>>>,
     flash_progress: Arc<Vec<atomic::Atomic<u64>>>,
     flash_finished: Arc<Vec<atomic::Atomic<bool>>>,
-    // the list of devices
     available_devices: Option<Box<[Arc<dbus_udisks2::DiskDevice>]>>,
-}
-
-fn refresh_devices(image_size: Option<u64>) -> Option<Box<[Arc<dbus_udisks2::DiskDevice>]>> {
-    let udisks = dbus_udisks2::UDisks2::new().unwrap();
-    let devices = dbus_udisks2::Disks::new(&udisks).devices;
-    let mut devices = devices
-        .into_iter()
-        .filter(|dick| dick.drive.connection_bus.eq("usb") || dick.drive.connection_bus.eq("sdio"))
-        .filter(|d| d.parent.size.neq(&0))
-        .filter(|d| d.parent.size >= image_size.unwrap_or(0))
-        .map(Arc::new)
-        .collect::<Vec<_>>()
-        .into_boxed_slice();
-    devices.sort_by_key(|d| d.drive.id.clone());
-    Some(devices)
-}
-
-/*fn is_windows_iso(file: &std::fs::File) -> bool {
-    if let Ok(fs) = iso9660::ISO9660::new(file) {
-        return fs.publisher_identifier() == "MICROSOFT CORPORATION";
-    }
-    false
-}*/
-#[derive(Debug)]
-struct Flash {
-    image: Option<std::fs::File>,
-    progress: Arc<Vec<atomic::Atomic<u64>>>,
-    finished: Arc<Vec<atomic::Atomic<bool>>>,
-}
-impl Flash {
-    fn new(
-        image: std::fs::File,
-        progress: Arc<Vec<atomic::Atomic<u64>>>,
-        finished: Arc<Vec<atomic::Atomic<bool>>>,
-    ) -> Flash {
-        Flash { image: Some(image), progress, finished }
-    }
-    fn write(&mut self, drives: Vec<std::fs::File>) -> popsicle::Task<Progress<'_>> {
-        let mut task = popsicle::Task::new(self.image.take().unwrap().into(), false);
-        for (i, file) in drives.into_iter().enumerate() {
-            let progress = Progress { id: i, flash: self, errors: vec![] };
-            task.subscribe(file.into(), (), progress);
-        }
-        task
-    }
-}
-
-#[derive(Debug)]
-struct Progress<'a> {
-    id: usize,
-    flash: &'a Flash,
-    errors: Vec<Result<(), crate::Error>>,
-}
-impl<'a> popsicle::Progress for Progress<'a> {
-    type Device = ();
-
-    fn message(&mut self, _: &Self::Device, kind: &str, message: &str) {
-        self.errors[self.id] = Err(crate::Error::new_popsicle(kind, message))
-    }
-
-    fn finish(&mut self) {
-        self.flash.finished[self.id].store(true, Ordering::SeqCst);
-    }
-
-    fn set(&mut self, value: u64) {
-        self.flash.progress[self.id].store(value, Ordering::SeqCst);
-    }
-}
-type UDisksOptions = HashMap<&'static str, dbus::arg::Variant<Box<dyn dbus::arg::RefArg>>>;
-fn udisks_unmount(dbus_path: &str) -> Result<(), ()> {
-    let connection = dbus::blocking::Connection::new_system().unwrap();
-
-    let dbus_path = ::dbus::strings::Path::new(dbus_path).unwrap();
-
-    let proxy = dbus::blocking::Proxy::new(
-        "org.freedesktop.UDisks2",
-        dbus_path,
-        std::time::Duration::new(25, 0),
-        &connection,
-    );
-
-    let mut options = UDisksOptions::new();
-    options.insert("force", dbus::arg::Variant(Box::new(true)));
-    let res: Result<(), _> =
-        proxy.method_call("org.freedesktop.UDisks2.Filesystem", "Unmount", (options,));
-
-    if let Err(err) = res {
-        if err.name() != Some("org.freedesktop.UDisks2.Error.NotMounted") {
-            return Err(());
-        }
-    }
-
-    Ok(())
-}
-
-fn udisks_open(dbus_path: &str) -> Result<std::fs::File, ()> {
-    let connection = dbus::blocking::Connection::new_system().unwrap();
-
-    let dbus_path = ::dbus::strings::Path::new(dbus_path).unwrap();
-
-    let proxy = dbus::blocking::Proxy::new(
-        "org.freedesktop.UDisks2",
-        &dbus_path,
-        std::time::Duration::new(25, 0),
-        &connection,
-    );
-    let mut options = UDisksOptions::new();
-    options.insert("flags", dbus::arg::Variant(Box::new(libc::O_SYNC)));
-    let res: (dbus::arg::OwnedFd,) =
-        proxy.method_call("org.freedesktop.UDisks2.Block", "OpenDevice", ("rw", options)).unwrap();
-
-    Ok(unsafe { std::fs::File::from_raw_fd(res.0.into_fd()) })
 }

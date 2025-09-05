@@ -402,14 +402,7 @@ impl App {
                     .push(hash_check_button)
                     .align_y(cosmic::iced::Alignment::Center),
             )])
-            .width(cosmic::iced::Length::Fill), //.control(
-                                                //    cosmic::widget::row()
-                                                //        .push(hash_dropdown)
-                                                //        .push(hash_text_input)
-                                                //        .push(hash_check_button)
-                                                //        .align_y(cosmic::iced::Alignment::Center)
-                                                //        .width(cosmic::iced::Length::Fill),
-                                                //)
+            .width(cosmic::iced::Length::Fill),
         ));
         let row = cosmic::widget::row()
             .push(image_icon)
@@ -428,18 +421,11 @@ impl App {
             .height(cosmic::iced::Length::Fill)
             .width(cosmic::iced::Length::Fill);
         cosmic::Element::new(
-            cosmic::widget::container(
-                row, //cosmic::widget::column()
-                    //    .push(image_top)
-                    //    .push(image_center)
-                    //    .push(image_bottom)
-                    //    .width(cosmic::iced::Length::Fill)
-                    //    .align_x(cosmic::iced::Alignment::Center),
-            )
-            .width(cosmic::iced::Length::Fill)
-            .height(cosmic::iced::Length::Fill)
-            .align_y(cosmic::iced::Alignment::Center)
-            .align_x(cosmic::iced::Alignment::Center),
+            cosmic::widget::container(row)
+                .width(cosmic::iced::Length::Fill)
+                .height(cosmic::iced::Length::Fill)
+                .align_y(cosmic::iced::Alignment::Center)
+                .align_x(cosmic::iced::Alignment::Center),
         )
     }
     fn select_drives_view(&self) -> cosmic::Element<'_, Message> {

@@ -263,6 +263,8 @@ impl cosmic::Application for App {
                     Arc::new((0..n).map(|_| atomic::Atomic::new(false)).collect::<_>());
                 self.state.flash_progress =
                     Arc::new((0..n).map(|_| atomic::Atomic::new(0)).collect::<_>());
+                self.state.previous = Arc::new(Mutex::new((0..n).map(|_| [0; 7]).collect::<_>()));
+
                 return cosmic::app::Task::done(cosmic::Action::App(Message::SwitchContext(
                     AppContext::Progress,
                 )));

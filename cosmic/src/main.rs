@@ -2,7 +2,7 @@ use popsicle_cosmic::{app, i18n};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let requested_languages = i18n_embed::DesktopLanguageRequester::requested_languages();
-    //i18n::init(&requested_languages);
+    i18n::init(&requested_languages);
     let settings = cosmic::app::Settings::default().size(cosmic::iced::Size::new(500., 300.));
 
     cosmic::app::run::<app::App>(settings, ())?;

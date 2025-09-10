@@ -1,4 +1,5 @@
 //! a
+use crate::fl;
 use cosmic::ApplicationExt;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -41,9 +42,11 @@ impl cosmic::Application for App {
         let mut header = Vec::new();
         match self.context {
             AppContext::ChooseAnImg { .. } => {
-                let mut next_button = cosmic::widget::button::suggested("Next");
+                let mut next_button = cosmic::widget::button::suggested(fl!("next"));
                 header.push(
-                    cosmic::widget::button::suggested("Cancel").on_press(Message::Close).into(),
+                    cosmic::widget::button::suggested(fl!("cancel"))
+                        .on_press(Message::Close)
+                        .into(),
                 );
                 if self.state.image.is_some() {
                     next_button =
@@ -55,7 +58,7 @@ impl cosmic::Application for App {
                 header
             }
             AppContext::SelectDrives { drive_selected } => {
-                let mut next_button = cosmic::widget::button::suggested("Next");
+                let mut next_button = cosmic::widget::button::suggested(fl!("next"));
                 header.push(
                     cosmic::widget::button::suggested("Back")
                         .on_press(Message::SwitchContext(AppContext::ChooseAnImg {
@@ -72,7 +75,7 @@ impl cosmic::Application for App {
             }
             AppContext::Progress => {
                 header.push(
-                    cosmic::widget::button::suggested("Cancel")
+                    cosmic::widget::button::suggested(fl!("cancel"))
                         .on_press(Message::SwitchContext(AppContext::ChooseAnImg {
                             generating_checksum: false,
                             identcal_hash: None,
@@ -83,7 +86,7 @@ impl cosmic::Application for App {
             }
             AppContext::Success => {
                 header.push(
-                    cosmic::widget::button::suggested("Flash Again")
+                    cosmic::widget::button::suggested(fl!("flash-again"))
                         .on_press(Message::SwitchContext(AppContext::ChooseAnImg {
                             generating_checksum: false,
                             identcal_hash: None,
@@ -91,7 +94,7 @@ impl cosmic::Application for App {
                         .into(),
                 );
                 header.push(
-                    cosmic::widget::button::suggested("Done").on_press(Message::Close).into(),
+                    cosmic::widget::button::suggested(fl!("done")).on_press(Message::Close).into(),
                 );
                 header
             }
@@ -345,17 +348,15 @@ impl App {
             "assets/application-x-cd-image.png",
         ))
         .width(cosmic::iced::Length::Fixed(50.));
-        let image_title = cosmic::widget::text::title4("Choose an Image"); // should be bold
-        let image_description = cosmic::widget::text::body(
-            "Select the .iso or .img that you want to flash. You can also plug your USB drives in now.",
-        );
+        let image_title = cosmic::widget::text::title4(fl!("image-view-title")); // should be bold
+        let image_description = cosmic::widget::text::body(fl!("image-view-description"));
         let image_top = cosmic::widget::column()
             .push(image_title)
             .push(image_description)
             .align_x(cosmic::iced::Left)
             .width(cosmic::iced::Length::Fill)
             .height(cosmic::iced::Length::Fill);
-        let gen_chksum = cosmic::widget::text::heading("Generating Checksum"); // must be bold
+        let gen_chksum = cosmic::widget::text::heading(fl!("generating-checksum")); // must be bold
         let (image_name, image_size) =
             if let (Some(name), Some(size)) = (&self.state.image_name, &self.state.image_size) {
                 (
@@ -363,11 +364,14 @@ impl App {
                     cosmic::widget::text::body(bytesize::ByteSize::b(*size).to_string()),
                 )
             } else {
-                (cosmic::widget::text::heading("No image selected"), cosmic::widget::text::body(""))
+                (
+                    cosmic::widget::text::heading(fl!("no-image-selected")),
+                    cosmic::widget::text::body(""),
+                )
             }; //should be bold or when empty Equal "No image selected";
         let mut image_center = cosmic::widget::column();
-        let image_file_open_button =
-            cosmic::widget::button::suggested("Choose Image").on_press(Message::OpenFile);
+        let image_file_open_button = cosmic::widget::button::suggested(fl!("choose-image-button"))
+            .on_press(Message::OpenFile);
         match generating_checksum {
             true => image_center = image_center.push(gen_chksum),
             false => {
@@ -385,7 +389,7 @@ impl App {
             Message::HashSelected,
         );
         let mut hash_text_input = cosmic::widget::text_input("", &self.state.hash_input);
-        let mut hash_check_button = cosmic::widget::button::suggested("Check");
+        let mut hash_check_button = cosmic::widget::button::suggested(fl!("check-label"));
         if self.state.image.is_some() {
             hash_check_button = hash_check_button.on_press(Message::CheckHash);
             hash_text_input = hash_text_input.on_input(Message::Input).style(match identcal_hash {
@@ -398,7 +402,7 @@ impl App {
             cosmic::widget::settings::item::flex_item_row(vec![cosmic::Element::new(
                 //"Hash:",
                 cosmic::widget::row()
-                    .push(cosmic::widget::text::body("Hash: "))
+                    .push(cosmic::widget::text::body(fl!("hash-label")))
                     .push(hash_dropdown)
                     .push(hash_text_input)
                     .push(hash_check_button)
@@ -435,9 +439,8 @@ impl App {
             "assets/drive-removable-media-usb.png",
         ))
         .width(cosmic::iced::Length::Fixed(50.));
-        let drive_label = cosmic::widget::text::title4("Select Drives"); // should be bold
-        let drive_description =
-            cosmic::widget::text::body("Flashing will erase all data on the selected drives.");
+        let drive_label = cosmic::widget::text::title4(fl!("devices-view-title")); // should be bold
+        let drive_description = cosmic::widget::text::body(fl!("devices-view-description"));
 
         let mut drive_buf = vec![];
         if let Some(drives) = self.state.drives_paths.as_ref() {
@@ -478,7 +481,7 @@ impl App {
             .push(
                 cosmic::widget::mouse_area(
                     cosmic::widget::container(
-                        cosmic::widget::checkbox("Select all", self.state.all_drives)
+                        cosmic::widget::checkbox(fl!("select-all"), self.state.all_drives)
                             .on_toggle(|_| Message::SelectedAllDrives),
                     )
                     .width(cosmic::iced::Length::Fill),
@@ -513,9 +516,8 @@ impl App {
             "assets/drive-removable-media-usb.png",
         ))
         .width(cosmic::iced::Length::Fixed(50.));
-        let flash_label = cosmic::widget::text::title4("Flashing Drives"); // should be bold
-        let flash_description =
-            cosmic::widget::text::body("Do not unplug devices while they are being flashed.");
+        let flash_label = cosmic::widget::text::title4(fl!("flash-view-title")); // should be bold
+        let flash_description = cosmic::widget::text::body(fl!("flash-view-description"));
 
         let mut flash_buf = vec![];
         let mut prev = self.state.previous.lock().unwrap();
@@ -589,7 +591,7 @@ impl App {
             "assets/process-completed-symbolic.svg",
         )))
         .size(50);
-        let complete_label = cosmic::widget::text::title4("Flashing Completed"); // should be bold
+        let complete_label = cosmic::widget::text::title4(fl!("flashing-completed")); // should be bold
         let complete_description = cosmic::widget::text::body(format!(
             "{} devices successfully flashed",
             self.state.drives_selected.as_ref().unwrap().len()

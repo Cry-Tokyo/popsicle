@@ -295,6 +295,7 @@ impl cosmic::Application for App {
                 return cosmic::task::future(async move {
                     let task = flash.write(drives);
                     let mut buf = [0u8; 64 * 1024];
+
                     match futures::executor::block_on(task.process(&mut buf)) {
                         Ok(_) => {}
                         Err(e) => {
@@ -548,14 +549,12 @@ impl App {
                 ));
                 let progress_column = cosmic::widget::column()
                     .push(
-                        cosmic::iced::widget::progress_bar(
-                            0.0..=100.,
-                            {
-                                let f = self.state.flash_progress[i].load(Ordering::SeqCst) as f64
-                                    / self.state.image_size.unwrap() as f64;
-                                f as f32
-                            }, //raw_value as f64 / length as f64
-                        )
+                        cosmic::iced::widget::progress_bar(0.0..=100., {
+                            let f = self.state.flash_progress[i].load(Ordering::SeqCst) as f32
+                                / self.state.image_size.unwrap() as f32;
+                            println!("{}", f);
+                            f
+                        })
                         .height(cosmic::iced::Length::Fixed(2.0)),
                     )
                     .push(progress_label)

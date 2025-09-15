@@ -295,7 +295,6 @@ impl cosmic::Application for App {
                 return cosmic::task::future(async move {
                     let task = flash.write(drives);
                     let mut buf = [0u8; 64 * 1024];
-
                     match futures::executor::block_on(task.process(&mut buf)) {
                         Ok(_) => {}
                         Err(e) => {
@@ -329,14 +328,21 @@ impl cosmic::Application for App {
         (app, msg)
     }
     fn view(&self) -> cosmic::Element<'_, Self::Message> {
-        match self.context {
+        let view = match self.context {
             AppContext::ChooseAnImg { generating_checksum, identcal_hash } => {
                 self.choose_an_img_view(generating_checksum, identcal_hash)
             }
             AppContext::SelectDrives { .. } => self.select_drives_view(),
             AppContext::Progress => self.progress_view(),
             AppContext::Success => self.success_view(),
-        }
+        };
+        cosmic::Element::new(
+            cosmic::widget::container(view)
+                .height(cosmic::iced::Length::Fill)
+                .width(cosmic::iced::Length::Fill)
+                .align_x(cosmic::iced::Alignment::Center)
+                .align_y(cosmic::iced::Alignment::Center),
+        )
     }
 }
 impl App {
@@ -357,7 +363,10 @@ impl App {
             .align_x(cosmic::iced::Left)
             .width(cosmic::iced::Length::Fill)
             .height(cosmic::iced::Length::Fill);
-        let gen_chksum = cosmic::widget::text::heading(fl!("generating-checksum")); // must be bold
+
+        let gen_chksum = cosmic::widget::column()
+            .push(cosmic::widget::text("Spinner goes here"))
+            .push(cosmic::widget::text::heading(fl!("generating-checksum")));
         let (image_name, image_size) =
             if let (Some(name), Some(size)) = (&self.state.image_name, &self.state.image_size) {
                 (
@@ -427,13 +436,7 @@ impl App {
             )
             .height(cosmic::iced::Length::Fill)
             .width(cosmic::iced::Length::Fill);
-        cosmic::Element::new(
-            cosmic::widget::container(row)
-                .width(cosmic::iced::Length::Fill)
-                .height(cosmic::iced::Length::Fill)
-                .align_y(cosmic::iced::Alignment::Center)
-                .align_x(cosmic::iced::Alignment::Center),
-        )
+        row
     }
     fn select_drives_view(&self) -> cosmic::Element<'_, Message> {
         let drive_icon = cosmic::widget::Image::new(cosmic::widget::image::Handle::from_path(
@@ -504,13 +507,7 @@ impl App {
             .push(drive_row)
             .width(cosmic::iced::Length::Fill)
             .align_x(cosmic::iced::Alignment::Center);
-        cosmic::Element::new(
-            cosmic::widget::container(column)
-                .width(cosmic::iced::Length::Fill)
-                .height(cosmic::iced::Length::Fill)
-                .align_x(cosmic::iced::Alignment::Center)
-                .align_y(cosmic::iced::Alignment::Center),
-        )
+        column
     }
     fn progress_view(&self) -> cosmic::Element<'_, Message> {
         let drive_icon = cosmic::widget::Image::new(cosmic::widget::image::Handle::from_path(
@@ -577,13 +574,8 @@ impl App {
             .push(flash_row)
             .width(cosmic::iced::Length::Fill)
             .align_x(cosmic::iced::Alignment::Center);
-        cosmic::Element::new(
-            cosmic::widget::container(drive_column)
-                .height(cosmic::iced::Length::Fill)
-                .width(cosmic::iced::Length::Fill)
-                .align_x(cosmic::iced::Alignment::Center)
-                .align_y(cosmic::iced::Alignment::Center),
-        )
+
+        drive_column
     }
     fn success_view(&self) -> cosmic::Element<'_, Message> {
         let complete_icon = cosmic::widget::icon(cosmic::widget::icon::from_path(PathBuf::from(
@@ -602,13 +594,7 @@ impl App {
             .width(cosmic::iced::Length::Fill);
         let complete_column =
             cosmic::widget::column().push(complete_row).width(cosmic::iced::Length::Fill);
-        cosmic::Element::new(
-            cosmic::widget::container(complete_column)
-                .height(cosmic::iced::Length::Fill)
-                .width(cosmic::iced::Length::Fill)
-                .align_x(cosmic::iced::Alignment::Center)
-                .align_y(cosmic::iced::Alignment::Center),
-        )
+        complete_column
     }
 }
 /// Messages emitted by the app.

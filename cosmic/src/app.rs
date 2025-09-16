@@ -1,6 +1,8 @@
 //! a
 use crate::fl;
 use cosmic::ApplicationExt;
+use futures::SinkExt;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
@@ -35,6 +37,7 @@ impl cosmic::Application for App {
                 cosmic::iced::time::every(cosmic::iced::time::Duration::from_secs(3))
                     .map(|_| Message::RefreshDevices)
             }
+            AppContext::Progress => cosmic::iced::Subscription::run(test).map(|_| Message::Done),
             _ => cosmic::iced::Subscription::none(),
         }
     }
@@ -150,52 +153,53 @@ impl cosmic::Application for App {
                 self.state.selected_hash = Some(selection);
             }
             Message::CheckHash => {
-                match self.context {
-                    AppContext::ChooseAnImg { identcal_hash, .. } => {
-                        self.context =
-                            AppContext::ChooseAnImg { generating_checksum: true, identcal_hash }
-                    }
-                    AppContext::SelectDrives { .. } => {}
-                    AppContext::Progress => {}
-                    AppContext::Success => {}
-                }
                 let (hash, path) =
                     (self.state.selected_hash.unwrap(), self.state.image.clone().unwrap());
+                if let Some(hash) = self.state.hashed.get(&(path.clone(), hash)) {
+                    self.state.hash = Some(hash.clone());
+                    return cosmic::task::message(Message::Done);
+                }
+                if let AppContext::ChooseAnImg { identcal_hash, .. } = self.context {
+                    self.context =
+                        AppContext::ChooseAnImg { generating_checksum: true, identcal_hash }
+                }
                 return cosmic::task::future(async move {
                     Message::GeneratedHash(crate::hash::generate_hash(hash, path))
                 });
             }
             Message::GeneratedHash(hash) => {
-                self.state.hash = hash;
-                match self.context {
-                    AppContext::ChooseAnImg { identcal_hash, .. } => {
-                        self.context =
-                            AppContext::ChooseAnImg { generating_checksum: false, identcal_hash }
-                    }
-                    AppContext::SelectDrives { .. } => {}
-                    AppContext::Progress => {}
-                    AppContext::Success => {}
-                }
+                self.state.hash = hash.clone();
+                self.state.hashed.insert(
+                    (self.state.image.as_ref().unwrap().clone(), self.state.selected_hash.unwrap()),
+                    hash.unwrap(),
+                );
                 if self.state.hash.is_some() {
-                    if self.state.hash.as_ref().unwrap() == &self.state.hash_input {
-                        if let AppContext::ChooseAnImg { generating_checksum, .. } = self.context {
-                            self.context = AppContext::ChooseAnImg {
-                                generating_checksum,
-                                identcal_hash: Some(true),
+                    match self.state.hash.as_ref().unwrap() == &self.state.hash_input {
+                        true => {
+                            if let AppContext::ChooseAnImg { generating_checksum, .. } =
+                                self.context
+                            {
+                                self.context = AppContext::ChooseAnImg {
+                                    generating_checksum,
+                                    identcal_hash: Some(true),
+                                }
                             }
                         }
-                    } else if let AppContext::ChooseAnImg { generating_checksum, .. } = self.context
-                    {
-                        self.context = AppContext::ChooseAnImg {
-                            generating_checksum,
-                            identcal_hash: Some(false),
+                        false => {
+                            if let AppContext::ChooseAnImg { generating_checksum, .. } =
+                                self.context
+                            {
+                                self.context = AppContext::ChooseAnImg {
+                                    generating_checksum,
+                                    identcal_hash: Some(false),
+                                }
+                            }
                         }
                     }
-
-                    if let AppContext::ChooseAnImg { identcal_hash, .. } = self.context {
-                        self.context =
-                            AppContext::ChooseAnImg { generating_checksum: false, identcal_hash }
-                    }
+                }
+                if let AppContext::ChooseAnImg { identcal_hash, .. } = self.context {
+                    self.context =
+                        AppContext::ChooseAnImg { generating_checksum: false, identcal_hash }
                 }
             }
             Message::SelectedAllDrives => {
@@ -296,16 +300,26 @@ impl cosmic::Application for App {
                     let task = flash.write(drives);
                     let mut buf = [0u8; 64 * 1024];
                     match futures::executor::block_on(task.process(&mut buf)) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            tracing::info!("Flash completed");
+                        }
                         Err(e) => {
                             tracing::error!("{}", e)
                         }
                     }
-
                     Message::Done
                 });
             }
-            Message::Done => {}
+            Message::Done => {
+                tracing::info!("Future returned");
+            }
+            Message::Flashing(mut sender) => {
+                futures::executor::block_on(sender.send(Event::Flash(crate::flash::Flash::new(
+                    std::fs::File::open(self.state.image.as_ref().unwrap()).unwrap(),
+                    self.state.flash_progress.clone(),
+                    self.state.flash_finished.clone(),
+                ))));
+            }
         }
         cosmic::app::Task::none()
     }
@@ -366,7 +380,8 @@ impl App {
 
         let gen_chksum = cosmic::widget::column()
             .push(cosmic::widget::text("Spinner goes here"))
-            .push(cosmic::widget::text::heading(fl!("generating-checksum")));
+            .push(cosmic::widget::text::heading(fl!("generating-checksum")))
+            .align_x(cosmic::iced::Center);
         let (image_name, image_size) =
             if let (Some(name), Some(size)) = (&self.state.image_name, &self.state.image_size) {
                 (
@@ -436,7 +451,7 @@ impl App {
             )
             .height(cosmic::iced::Length::Fill)
             .width(cosmic::iced::Length::Fill);
-        row
+        row.into()
     }
     fn select_drives_view(&self) -> cosmic::Element<'_, Message> {
         let drive_icon = cosmic::widget::Image::new(cosmic::widget::image::Handle::from_path(
@@ -478,7 +493,6 @@ impl App {
             }
         }
         let drive_select = cosmic::widget::settings::section::section().extend(drive_buf);
-
         let drive_column = cosmic::widget::column()
             .push(drive_label)
             .push(drive_description)
@@ -497,17 +511,12 @@ impl App {
                     .width(cosmic::iced::Length::Fill)
                     .height(cosmic::iced::Length::Fill),
             );
-
         let drive_row = cosmic::widget::row()
             .push(drive_icon)
             .push(drive_column)
             .height(cosmic::iced::Length::Fill)
             .width(cosmic::iced::Length::Fill);
-        let column = cosmic::widget::column()
-            .push(drive_row)
-            .width(cosmic::iced::Length::Fill)
-            .align_x(cosmic::iced::Alignment::Center);
-        column
+        drive_row.into()
     }
     fn progress_view(&self) -> cosmic::Element<'_, Message> {
         let drive_icon = cosmic::widget::Image::new(cosmic::widget::image::Handle::from_path(
@@ -549,8 +558,7 @@ impl App {
                         cosmic::iced::widget::progress_bar(0.0..=100., {
                             let f = self.state.flash_progress[i].load(Ordering::SeqCst) as f32
                                 / self.state.image_size.unwrap() as f32;
-                            println!("{}", f);
-                            f
+                            f * 100.0
                         })
                         .height(cosmic::iced::Length::Fixed(2.0)),
                     )
@@ -570,12 +578,7 @@ impl App {
             .width(cosmic::iced::Length::Fill)
             .extend(flash_buf);
         let flash_row = cosmic::widget::row().push(drive_icon).push(flash_column);
-        let drive_column = cosmic::widget::column()
-            .push(flash_row)
-            .width(cosmic::iced::Length::Fill)
-            .align_x(cosmic::iced::Alignment::Center);
-
-        drive_column
+        flash_row.into()
     }
     fn success_view(&self) -> cosmic::Element<'_, Message> {
         let complete_icon = cosmic::widget::icon(cosmic::widget::icon::from_path(PathBuf::from(
@@ -592,9 +595,7 @@ impl App {
             .push(cosmic::widget::column().push(complete_label).push(complete_description))
             .height(cosmic::iced::Length::Fill)
             .width(cosmic::iced::Length::Fill);
-        let complete_column =
-            cosmic::widget::column().push(complete_row).width(cosmic::iced::Length::Fill);
-        complete_column
+        complete_row.into()
     }
 }
 /// Messages emitted by the app.
@@ -624,6 +625,8 @@ pub enum Message {
     CheckHash,
     ///
     Flash,
+    ///
+    Flashing(cosmic::iced::futures::channel::mpsc::Sender<Event>),
     ///
     StartFlash,
     ///
@@ -667,7 +670,7 @@ pub struct AppState {
     hash: Option<String>,
     selected_hash: Option<usize>,
     all_drives: bool,
-
+    hashed: HashMap<(PathBuf, usize), String>,
     // list of devices paths and sizes
     drives_paths: Option<Vec<(String, String, String)>>,
     drives: HashMap<usize, bool>,
@@ -679,4 +682,32 @@ pub struct AppState {
     flash_progress: Arc<Vec<atomic::Atomic<u64>>>,
     flash_finished: Arc<Vec<atomic::Atomic<bool>>>,
     available_devices: Option<Box<[Arc<dbus_udisks2::DiskDevice>]>>,
+}
+
+enum Event {
+    Flash(crate::flash::Flash),
+}
+fn test() -> impl cosmic::iced::futures::Stream<Item = Message> {
+    cosmic::iced::stream::channel(100, |mut output| async move {
+        let (sender, mut receiver) = cosmic::iced::futures::channel::mpsc::channel(100);
+        output.send(Message::Flashing(sender)).await;
+        loop {
+            let input = receiver.select_next_some().await;
+            match input {
+                Event::Flash(o) => {
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    
+                    output.send(Message::Done).await;
+                }
+            }
+        }
+    })
 }

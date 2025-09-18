@@ -250,7 +250,6 @@ impl cosmic::Application for App {
                     drive_selected: !self.state.drives.values().all(|f| f.eq(&false)),
                 };
             }
-
             Message::StartFlash => {
                 self.state.drives_selected = Some(
                     self.state
@@ -310,16 +309,20 @@ impl cosmic::Application for App {
                     Message::Done
                 });
             }
+            Message::Flashing(mut sender) => {
+                futures::executor::block_on(sender.send(Event::Flash(
+                    crate::flash::Flash::new(
+                        std::fs::File::open(self.state.image.as_ref().unwrap()).unwrap(),
+                        self.state.flash_progress.clone(),
+                        self.state.flash_finished.clone(),
+                    ),
+                    self.state.drives_selected.as_ref().unwrap().clone(),
+                )));
+            }
             Message::Done => {
                 tracing::info!("Future returned");
             }
-            Message::Flashing(mut sender) => {
-                futures::executor::block_on(sender.send(Event::Flash(crate::flash::Flash::new(
-                    std::fs::File::open(self.state.image.as_ref().unwrap()).unwrap(),
-                    self.state.flash_progress.clone(),
-                    self.state.flash_finished.clone(),
-                ))));
-            }
+            Message::Failed => {}
         }
         cosmic::app::Task::none()
     }
@@ -631,6 +634,8 @@ pub enum Message {
     StartFlash,
     ///
     Done,
+    ///
+    Failed,
 }
 /// The context of the app which will be displayed.
 #[derive(Clone, Copy, Debug)]
@@ -676,7 +681,7 @@ pub struct AppState {
     drives: HashMap<usize, bool>,
     //drives choosen to be flashed
     drives_selected: Option<Vec<Arc<dbus_udisks2::DiskDevice>>>, //Option<Vec<String>>,
-
+    test: Arc<atomic::Atomic<bool>>,
     //
     previous: Arc<Mutex<Vec<[u64; 7]>>>,
     flash_progress: Arc<Vec<atomic::Atomic<u64>>>,
@@ -685,7 +690,9 @@ pub struct AppState {
 }
 
 enum Event {
-    Flash(crate::flash::Flash),
+    Flash(crate::flash::Flash, Vec<Arc<dbus_udisks2::DiskDevice>>),
+    T1(Arc<atomic::Atomic<bool>>),
+    T2(Arc<atomic::Atomic<bool>>),
 }
 fn test() -> impl cosmic::iced::futures::Stream<Item = Message> {
     cosmic::iced::stream::channel(100, |mut output| async move {
@@ -694,18 +701,47 @@ fn test() -> impl cosmic::iced::futures::Stream<Item = Message> {
         loop {
             let input = receiver.select_next_some().await;
             match input {
-                Event::Flash(o) => {
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    
-                    output.send(Message::Done).await;
+                Event::T1(b) => {
+                    b.store(true, Ordering::SeqCst);
+                }
+                Event::T2(b) => {
+                    b.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+        }
+    })
+}
+fn flad() -> impl cosmic::iced::futures::Stream<Item = Message> {
+    cosmic::iced::stream::channel(100, |mut output| async move {
+        let (sender, mut receiver) = cosmic::iced::futures::channel::mpsc::channel(100);
+        output.send(Message::Flashing(sender)).await;
+        loop {
+            let input = receiver.select_next_some().await;
+            match input {
+                Event::Flash(mut f, d) => {
+                    let drives = d
+                        .iter()
+                        .map(|p| {
+                            let _ = crate::flash::udisks_unmount(&p.parent.path);
+                            for partition in &p.partitions {
+                                let _ = crate::flash::udisks_unmount(&partition.path);
+                            }
+                            crate::flash::udisks_open(&p.parent.path).unwrap()
+                        })
+                        .collect();
+                    let task = f.write(drives);
+                    let mut buf = [0u8; 64 * 1024];
+                    match futures::executor::block_on(task.process(&mut buf)) {
+                        Ok(_) => {
+                            tracing::info!("Flash completed");
+                            output.send(Message::Done).await;
+                        }
+                        Err(e) => {
+                            tracing::error!("{}", e);
+                            output.send(Message::Failed).await;
+                        }
+                    }
                 }
             }
         }

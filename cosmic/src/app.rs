@@ -323,6 +323,12 @@ impl cosmic::Application for App {
                 tracing::info!("Future returned");
             }
             Message::Failed => {}
+            Message::T3(mut s) => {
+                return cosmic::task::future(async move {
+                    s.send(Event::TStart(())).await;
+                    return Message::Done;
+                });
+            }
         }
         cosmic::app::Task::none()
     }
@@ -631,6 +637,9 @@ pub enum Message {
     ///
     Flashing(cosmic::iced::futures::channel::mpsc::Sender<Event>),
     ///
+    T3(cosmic::iced::futures::channel::mpsc::Sender<Event>),
+
+    ///
     StartFlash,
     ///
     Done,
@@ -664,8 +673,9 @@ impl Default for AppContext {
 }
 
 /// The app state the store all data that drives logic.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AppState {
+    sender: Option<cosmic::iced::futures::channel::mpsc::Sender<Event>>,
     // needed image selection, label for name, size
     image: Option<PathBuf>,
     image_name: Option<String>,
@@ -688,16 +698,21 @@ pub struct AppState {
     flash_finished: Arc<Vec<atomic::Atomic<bool>>>,
     available_devices: Option<Box<[Arc<dbus_udisks2::DiskDevice>]>>,
 }
-
+impl Default for AppState {
+    fn default() -> Self {
+        Self { sender: None, ..Default::default() }
+    }
+}
 enum Event {
     Flash(crate::flash::Flash, Vec<Arc<dbus_udisks2::DiskDevice>>),
+    TStart(()),
     T1(Arc<atomic::Atomic<bool>>),
     T2(Arc<atomic::Atomic<bool>>),
 }
 fn test() -> impl cosmic::iced::futures::Stream<Item = Message> {
     cosmic::iced::stream::channel(100, |mut output| async move {
         let (sender, mut receiver) = cosmic::iced::futures::channel::mpsc::channel(100);
-        output.send(Message::Flashing(sender)).await;
+        output.send(Message::T3(sender)).await;
         loop {
             let input = receiver.select_next_some().await;
             match input {
@@ -743,6 +758,7 @@ fn flad() -> impl cosmic::iced::futures::Stream<Item = Message> {
                         }
                     }
                 }
+                _ => {}
             }
         }
     })
